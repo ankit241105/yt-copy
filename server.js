@@ -6,6 +6,7 @@ import cookieParser from "cookie-parser";
 import connectDB from "./config/connectDB.js";
 import authRoutes from "./routes/authRoutes.js";
 import adminAuthRoutes from "./routes/adminAuthRoutes.js";
+import adminVideoRoutes from "./routes/adminVideoRoutes.js";
 import monitoringRoutes from "./routes/monitoringRoutes.js";
 import { errorHandler, notFound } from "./middlewares/errorHandler.js";
 import { attachRequestId, requestLogger } from "./middlewares/requestLogger.js";
@@ -46,6 +47,7 @@ app.get("/", (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use(ADMIN_AUTH_BASE_PATH, adminAuthRoutes);
+app.use(ADMIN_AUTH_BASE_PATH, adminVideoRoutes);
 app.use("/api/monitoring", monitoringRoutes);
 
 app.use(notFound);

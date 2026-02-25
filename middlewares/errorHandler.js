@@ -37,6 +37,19 @@ export const errorHandler = (err, _req, res, _next) => {
     message = `${field} already exists.`;
   }
 
+  if (err.name === "MulterError") {
+    statusCode = 400;
+
+    if (err.code === "LIMIT_FILE_SIZE") {
+      statusCode = 413;
+      message = "Uploaded file exceeds allowed size limit.";
+    } else if (err.code === "LIMIT_UNEXPECTED_FILE") {
+      message = "Unexpected file field received.";
+    } else {
+      message = err.message || "File upload failed.";
+    }
+  }
+
   if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
     statusCode = 400;
     message = "Invalid JSON payload.";
