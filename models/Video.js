@@ -55,6 +55,13 @@ const videoSchema = new mongoose.Schema(
   }
 );
 
+videoSchema.index({ publishStatus: 1, uploadDate: -1, _id: -1 });
+videoSchema.index({ publishStatus: 1, viewCount: -1, uploadDate: -1, _id: -1 });
+videoSchema.index({ uploadDate: -1, _id: -1 });
+videoSchema.index({ uploadedBy: 1, publishStatus: 1, uploadDate: -1, _id: -1 });
+videoSchema.index({ tags: 1, publishStatus: 1, uploadDate: -1, _id: -1 });
+videoSchema.index({ title: "text", tags: "text" });
+
 const Video = mongoose.model("Video", videoSchema);
 
 export default Video;

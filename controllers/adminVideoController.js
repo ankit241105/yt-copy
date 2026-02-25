@@ -336,7 +336,8 @@ export const listAdminVideos = asyncHandler(async (req, res, next) => {
     Video.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit),
+      .limit(limit)
+      .lean(),
     Video.countDocuments(query),
   ]);
 
@@ -354,12 +355,30 @@ export const listAdminVideos = asyncHandler(async (req, res, next) => {
 
 export const getAdminDashboardStats = asyncHandler(async (req, res) => {
   const query = req.user.role === "MINI_ADMIN" ? { uploadedBy: req.user.id } : {};
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const [totalVideos, publishedVideos, draftVideos] = await Promise.all([
+  const [totalVideos, publishedVideos, draftVideos, recentVideos, uploadsLast7Days, uploadsLast30Days] = await Promise.all([
     Video.countDocuments(query),
     Video.countDocuments({ ...query, publishStatus: "PUBLISHED" }),
     Video.countDocuments({ ...query, publishStatus: "DRAFT" }),
+    Video.find(query, {
+      title: 1,
+      thumbnailUrl: 1,
+      publishStatus: 1,
+      uploadDate: 1,
+      viewCount: 1,
+    })
+      .sort({ uploadDate: -1, _id: -1 })
+      .limit(6)
+      .lean(),
+    Video.countDocuments({ ...query, uploadDate: { $gte: sevenDaysAgo } }),
+    Video.countDocuments({ ...query, uploadDate: { $gte: thirtyDaysAgo } }),
   ]);
+
+  const publishRatio = totalVideos > 0 ? Number(((publishedVideos / totalVideos) * 100).toFixed(2)) : 0;
 
   res.status(200).json({
     success: true,
@@ -367,7 +386,11 @@ export const getAdminDashboardStats = asyncHandler(async (req, res) => {
       totalVideos,
       publishedVideos,
       draftVideos,
+      publishRatio,
+      uploadsLast7Days,
+      uploadsLast30Days,
     },
+    recentVideos,
   });
 }, "getAdminDashboardStats");
 

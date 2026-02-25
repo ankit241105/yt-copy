@@ -43,22 +43,54 @@ const getTitleKeywords = (title) => {
   ].slice(0, 8);
 };
 
-const excludeVideoIds = (videos) => videos.map((video) => video._id);
-
 const basePublishedQuery = {
   publishStatus: "PUBLISHED",
+};
+
+const encodeCursor = (video) => {
+  const payload = `${new Date(video.uploadDate).toISOString()}|${video._id.toString()}`;
+  return Buffer.from(payload, "utf8").toString("base64url");
+};
+
+const decodeCursor = (cursor) => {
+  try {
+    const decoded = Buffer.from(String(cursor), "base64url").toString("utf8");
+    const [dateIso, id] = decoded.split("|");
+    if (!dateIso || !id) {
+      return null;
+    }
+    const date = new Date(dateIso);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+    return { date, id };
+  } catch {
+    return null;
+  }
 };
 
 export const getHomeFeed = asyncHandler(async (req, res) => {
   const page = parsePage(req.query?.page);
   const limit = parseLimit(req.query?.limit, DEFAULT_LIMIT);
   const skip = (page - 1) * limit;
+  const cursor = normalizeText(req.query?.cursor);
   const sortBy = normalizeText(req.query?.sortBy || "latest").toLowerCase();
   const tag = normalizeText(req.query?.tag).toLowerCase();
+  const useCursor = Boolean(cursor);
 
   const query = { ...basePublishedQuery };
   if (tag) {
     query.tags = tag;
+  }
+
+  if (useCursor && sortBy === "latest") {
+    const parsed = decodeCursor(cursor);
+    if (parsed) {
+      query.$or = [
+        { uploadDate: { $lt: parsed.date } },
+        { uploadDate: parsed.date, _id: { $lt: parsed.id } },
+      ];
+    }
   }
 
   const sort =
@@ -66,10 +98,26 @@ export const getHomeFeed = asyncHandler(async (req, res) => {
       ? { viewCount: -1, uploadDate: -1, _id: -1 }
       : { uploadDate: -1, _id: -1 };
 
-  const [videos, total] = await Promise.all([
-    Video.find(query, pickPublicVideoFields).sort(sort).skip(skip).limit(limit),
-    Video.countDocuments(query),
-  ]);
+  const videos = useCursor
+    ? await Video.find(query, pickPublicVideoFields).sort(sort).limit(limit).lean()
+    : await Video.find(query, pickPublicVideoFields).sort(sort).skip(skip).limit(limit).lean();
+
+  let total = null;
+  let totalPages = null;
+  let hasMore = false;
+
+  if (useCursor) {
+    hasMore = videos.length === limit;
+  } else {
+    total = await Video.countDocuments(query);
+    totalPages = Math.max(1, Math.ceil(total / limit));
+    hasMore = skip + videos.length < total;
+  }
+
+  const nextCursor =
+    useCursor && videos.length > 0 && sortBy === "latest"
+      ? encodeCursor(videos[videos.length - 1])
+      : null;
 
   res.status(200).json({
     success: true,
@@ -78,8 +126,10 @@ export const getHomeFeed = asyncHandler(async (req, res) => {
       page,
       limit,
       total,
-      totalPages: Math.max(1, Math.ceil(total / limit)),
-      hasMore: skip + videos.length < total,
+      totalPages,
+      hasMore,
+      nextCursor,
+      mode: useCursor ? "cursor" : "page",
     },
   });
 }, "getHomeFeed");
@@ -106,7 +156,8 @@ export const searchPublicVideos = asyncHandler(async (req, res, next) => {
     Video.find(query, pickPublicVideoFields)
       .sort({ viewCount: -1, uploadDate: -1, _id: -1 })
       .skip(skip)
-      .limit(limit),
+      .limit(limit)
+      .lean(),
     Video.countDocuments(query),
   ]);
 
@@ -132,7 +183,7 @@ export const getPublicVideoById = asyncHandler(async (req, res, next) => {
       ...basePublishedQuery,
     },
     pickPublicVideoFields
-  );
+  ).lean();
 
   if (!video) {
     return next(new AppError(404, "Video not found."));
@@ -155,7 +206,7 @@ export const getUpNextVideos = asyncHandler(async (req, res, next) => {
   const currentVideo = await Video.findOne({
     _id: videoId,
     ...basePublishedQuery,
-  });
+  }).lean();
 
   if (!currentVideo) {
     return next(new AppError(404, "Video not found."));
@@ -184,7 +235,8 @@ export const getUpNextVideos = asyncHandler(async (req, res, next) => {
       pickPublicVideoFields
     )
       .sort({ uploadDate: -1, _id: -1 })
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
     pushUniqueVideos(byTags);
   }
@@ -204,7 +256,8 @@ export const getUpNextVideos = asyncHandler(async (req, res, next) => {
         pickPublicVideoFields
       )
         .sort({ uploadDate: -1, _id: -1 })
-        .limit(limit - upNext.length);
+        .limit(limit - upNext.length)
+        .lean();
 
       pushUniqueVideos(byTitleKeywords);
     }
@@ -219,7 +272,8 @@ export const getUpNextVideos = asyncHandler(async (req, res, next) => {
       pickPublicVideoFields
     )
       .sort({ uploadDate: -1, _id: -1 })
-      .limit(limit - upNext.length);
+      .limit(limit - upNext.length)
+      .lean();
 
     pushUniqueVideos(recentFallback);
   }
@@ -233,7 +287,8 @@ export const getUpNextVideos = asyncHandler(async (req, res, next) => {
       pickPublicVideoFields
     )
       .sort({ viewCount: -1, uploadDate: -1, _id: -1 })
-      .limit(limit - upNext.length);
+      .limit(limit - upNext.length)
+      .lean();
 
     pushUniqueVideos(trendingFallback);
   }

@@ -6,13 +6,18 @@ import {
   incrementVideoView,
   searchPublicVideos,
 } from "../controllers/publicVideoController.js";
+import {
+  cachePublicDetail,
+  cachePublicFeed,
+  cachePublicSearch,
+} from "../middlewares/cacheHeaders.js";
 
 const router = express.Router();
 
-router.get("/home", getHomeFeed);
-router.get("/search", searchPublicVideos);
-router.get("/:videoId/up-next", getUpNextVideos);
+router.get("/home", cachePublicFeed, getHomeFeed);
+router.get("/search", cachePublicSearch, searchPublicVideos);
+router.get("/:videoId/up-next", cachePublicFeed, getUpNextVideos);
 router.post("/:videoId/view", incrementVideoView);
-router.get("/:videoId", getPublicVideoById);
+router.get("/:videoId", cachePublicDetail, getPublicVideoById);
 
 export default router;
