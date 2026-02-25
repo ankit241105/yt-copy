@@ -7,7 +7,9 @@ import connectDB from "./config/connectDB.js";
 import authRoutes from "./routes/authRoutes.js";
 import adminAuthRoutes from "./routes/adminAuthRoutes.js";
 import adminVideoRoutes from "./routes/adminVideoRoutes.js";
+import adminUserRoutes from "./routes/adminUserRoutes.js";
 import monitoringRoutes from "./routes/monitoringRoutes.js";
+import publicVideoRoutes from "./routes/publicVideoRoutes.js";
 import { errorHandler, notFound } from "./middlewares/errorHandler.js";
 import { attachRequestId, requestLogger } from "./middlewares/requestLogger.js";
 import logger from "./utils/logger.js";
@@ -46,7 +48,9 @@ app.get("/", (req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/videos", publicVideoRoutes);
 app.use(ADMIN_AUTH_BASE_PATH, adminAuthRoutes);
+app.use(ADMIN_AUTH_BASE_PATH, adminUserRoutes);
 app.use(ADMIN_AUTH_BASE_PATH, adminVideoRoutes);
 app.use("/api/monitoring", monitoringRoutes);
 

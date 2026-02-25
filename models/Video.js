@@ -14,7 +14,15 @@ const videoSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    cloudinaryVideoPublicId: {
+      type: String,
+      default: null,
+    },
     thumbnailUrl: {
+      type: String,
+      default: null,
+    },
+    cloudinaryThumbnailPublicId: {
       type: String,
       default: null,
     },

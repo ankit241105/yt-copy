@@ -53,6 +53,12 @@ const sanitizePublishStatus = (rawStatus) => {
   return value;
 };
 
+const parsePagination = (query) => {
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+  return { page, limit, skip: (page - 1) * limit };
+};
+
 const cleanupTempFiles = async (files) => {
   const allFiles = Object.values(files || {}).flat();
 
@@ -203,7 +209,9 @@ export const uploadVideoByAdmin = asyncHandler(async (req, res, next) => {
       title,
       tags,
       videoUrl: videoUploadResponse.secure_url,
+      cloudinaryVideoPublicId: videoUploadResponse.public_id,
       thumbnailUrl,
+      cloudinaryThumbnailPublicId: thumbnailPublicId,
       publishStatus,
       uploadedBy: req.user.id,
       uploadedByRole: req.user.role,
@@ -295,3 +303,196 @@ export const getAdminUploadStatus = asyncHandler(async (req, res, next) => {
     upload: status,
   });
 }, "getAdminUploadStatus");
+
+export const listAdminVideos = asyncHandler(async (req, res, next) => {
+  const { page, limit, skip } = parsePagination(req.query);
+  const publishStatus = req.query?.publishStatus
+    ? sanitizePublishStatus(req.query.publishStatus)
+    : null;
+  const search = req.query?.search ? String(req.query.search).trim() : "";
+
+  if (req.query?.publishStatus && !publishStatus) {
+    return next(new AppError(400, "Invalid publishStatus filter."));
+  }
+
+  const query = {};
+
+  if (req.user.role === "MINI_ADMIN") {
+    query.uploadedBy = req.user.id;
+  }
+
+  if (publishStatus) {
+    query.publishStatus = publishStatus;
+  }
+
+  if (search) {
+    query.$or = [
+      { title: { $regex: search, $options: "i" } },
+      { tags: { $elemMatch: { $regex: search, $options: "i" } } },
+    ];
+  }
+
+  const [videos, total] = await Promise.all([
+    Video.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Video.countDocuments(query),
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: videos,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
+  });
+}, "listAdminVideos");
+
+export const getAdminDashboardStats = asyncHandler(async (req, res) => {
+  const query = req.user.role === "MINI_ADMIN" ? { uploadedBy: req.user.id } : {};
+
+  const [totalVideos, publishedVideos, draftVideos] = await Promise.all([
+    Video.countDocuments(query),
+    Video.countDocuments({ ...query, publishStatus: "PUBLISHED" }),
+    Video.countDocuments({ ...query, publishStatus: "DRAFT" }),
+  ]);
+
+  res.status(200).json({
+    success: true,
+    stats: {
+      totalVideos,
+      publishedVideos,
+      draftVideos,
+    },
+  });
+}, "getAdminDashboardStats");
+
+export const updateVideoPublishStatus = asyncHandler(async (req, res, next) => {
+  const { videoId } = req.params;
+  const publishStatus = sanitizePublishStatus(req.body?.publishStatus);
+
+  if (!publishStatus) {
+    return next(new AppError(400, "publishStatus must be DRAFT or PUBLISHED."));
+  }
+
+  const video = await Video.findById(videoId);
+  if (!video) {
+    return next(new AppError(404, "Video not found."));
+  }
+
+  if (req.user.role === "MINI_ADMIN" && video.uploadedBy.toString() !== req.user.id) {
+    return next(new AppError(403, "Mini admin can update only own videos."));
+  }
+
+  video.publishStatus = publishStatus;
+  await video.save();
+
+  res.status(200).json({
+    success: true,
+    message: "Video publish status updated successfully.",
+    video,
+  });
+}, "updateVideoPublishStatus");
+
+export const updateVideoBySuperAdmin = asyncHandler(async (req, res, next) => {
+  const { videoId } = req.params;
+  const video = await Video.findById(videoId);
+
+  if (!video) {
+    return next(new AppError(404, "Video not found."));
+  }
+
+  const updates = {};
+
+  if (req.body?.title !== undefined) {
+    const title = String(req.body.title).trim();
+    if (!title) {
+      return next(new AppError(400, "Title cannot be empty."));
+    }
+    updates.title = title;
+  }
+
+  if (req.body?.tags !== undefined) {
+    const tagsInput = req.body.tags;
+    const tags = Array.isArray(tagsInput)
+      ? tagsInput
+      : String(tagsInput)
+          .split(",")
+          .map((tag) => tag.trim());
+
+    const normalizedTags = [...new Set(tags.map((tag) => String(tag).toLowerCase()).filter(Boolean))];
+    if (!normalizedTags.length) {
+      return next(new AppError(400, "At least one tag is required."));
+    }
+    updates.tags = normalizedTags;
+  }
+
+  if (req.body?.thumbnailUrl !== undefined) {
+    const thumbnailUrl = String(req.body.thumbnailUrl || "").trim();
+    updates.thumbnailUrl = thumbnailUrl || null;
+  }
+
+  if (req.body?.publishStatus !== undefined) {
+    const publishStatus = sanitizePublishStatus(req.body.publishStatus);
+    if (!publishStatus) {
+      return next(new AppError(400, "publishStatus must be DRAFT or PUBLISHED."));
+    }
+    updates.publishStatus = publishStatus;
+  }
+
+  if (!Object.keys(updates).length) {
+    return next(new AppError(400, "No valid fields provided for update."));
+  }
+
+  Object.assign(video, updates);
+  await video.save();
+
+  res.status(200).json({
+    success: true,
+    message: "Video updated successfully.",
+    video,
+  });
+}, "updateVideoBySuperAdmin");
+
+export const deleteVideoBySuperAdmin = asyncHandler(async (req, res, next) => {
+  const { videoId } = req.params;
+  const video = await Video.findById(videoId);
+
+  if (!video) {
+    return next(new AppError(404, "Video not found."));
+  }
+
+  const apiConfig = getCloudinaryConfig();
+
+  const cleanupTasks = [];
+  if (video.cloudinaryVideoPublicId) {
+    cleanupTasks.push(
+      destroyCloudinaryAsset({
+        publicId: video.cloudinaryVideoPublicId,
+        resourceType: "video",
+        apiConfig,
+      })
+    );
+  }
+  if (video.cloudinaryThumbnailPublicId) {
+    cleanupTasks.push(
+      destroyCloudinaryAsset({
+        publicId: video.cloudinaryThumbnailPublicId,
+        resourceType: "image",
+        apiConfig,
+      })
+    );
+  }
+  await Promise.allSettled(cleanupTasks);
+
+  await video.deleteOne();
+
+  res.status(200).json({
+    success: true,
+    message: "Video deleted successfully.",
+  });
+}, "deleteVideoBySuperAdmin");
